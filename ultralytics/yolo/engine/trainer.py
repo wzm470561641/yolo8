@@ -27,7 +27,7 @@ from ultralytics.yolo.data.utils import check_cls_dataset, check_det_dataset
 from ultralytics.yolo.utils import (DEFAULT_CFG, LOGGER, ONLINE, RANK, ROOT, SETTINGS, TQDM_BAR_FORMAT, __version__,
                                     callbacks, clean_url, colorstr, emojis, yaml_save)
 from ultralytics.yolo.utils.autobatch import check_train_batch_size
-from ultralytics.yolo.utils.checks import check_file, check_imgsz, print_args
+from ultralytics.yolo.utils.checks import check_file, check_imgsz, check_version, print_args
 from ultralytics.yolo.utils.dist import ddp_cleanup, generate_ddp_command
 from ultralytics.yolo.utils.files import get_latest_run, increment_path
 from ultralytics.yolo.utils.torch_utils import (EarlyStopping, ModelEMA, de_parallel, init_seeds, one_cycle,
@@ -83,7 +83,8 @@ class BaseTrainer:
         self.device = select_device(self.args.device, self.args.batch)
         self.check_resume()
         self.validator = None
-        self.model = None
+        self._model = None
+        self._not_opt_model = None
         self.metrics = None
         init_seeds(self.args.seed + 1 + RANK, deterministic=self.args.deterministic)
 
@@ -115,6 +116,7 @@ class BaseTrainer:
 
         # Model and Dataset
         self.model = self.args.model
+
         try:
             if self.args.task == 'classify':
                 self.data = check_cls_dataset(self.args.data)
@@ -253,7 +255,7 @@ class BaseTrainer:
             self.validator = self.get_validator()
             metric_keys = self.validator.metrics.keys + self.label_loss_items(prefix='val')
             self.metrics = dict(zip(metric_keys, [0] * len(metric_keys)))  # TODO: init metrics for plot_results()?
-            self.ema = ModelEMA(self.model)
+            self.ema = ModelEMA(self.no_opt_model)
             if self.args.plots and not self.args.v5loader:
                 self.plot_training_labels()
         self.resume_training(ckpt)
@@ -356,7 +358,8 @@ class BaseTrainer:
             if RANK in (-1, 0):
 
                 # Validation
-                self.ema.update_attr(self.model, include=['yaml', 'nc', 'args', 'names', 'stride', 'class_weights'])
+                self.ema.update_attr(self.no_opt_model,
+                                     include=['yaml', 'nc', 'args', 'names', 'stride', 'class_weights'])
                 final_epoch = (epoch + 1 == self.epochs) or self.stopper.possible_stop
 
                 if self.args.val or final_epoch:
@@ -400,7 +403,7 @@ class BaseTrainer:
         ckpt = {
             'epoch': self.epoch,
             'best_fitness': self.best_fitness,
-            'model': deepcopy(de_parallel(self.model)).half(),
+            'model': deepcopy(de_parallel(self.no_opt_model)).half(),
             'ema': deepcopy(self.ema.ema).half(),
             'updates': self.ema.updates,
             'optimizer': self.optimizer.state_dict(),
@@ -448,7 +451,7 @@ class BaseTrainer:
         self.scaler.update()
         self.optimizer.zero_grad()
         if self.ema:
-            self.ema.update(self.model)
+            self.ema.update(self.no_opt_model)
 
     def preprocess_batch(self, batch):
         """
@@ -626,6 +629,26 @@ class BaseTrainer:
         LOGGER.info(f"{colorstr('optimizer:')} {type(optimizer).__name__}(lr={lr}) with parameter groups "
                     f'{len(g[1])} weight(decay=0.0), {len(g[0])} weight(decay={decay}), {len(g[2])} bias')
         return optimizer
+
+    @property
+    def model(self):
+        return self._model
+
+    @model.setter
+    def model(self, set_model):
+        if self.args.compile_model and isinstance(set_model, nn.Module) and not self._not_opt_model:
+            if check_version(torch.__version__, minimum='2.0'):
+                self._not_opt_model = set_model
+                self._model = torch.compile(self._not_opt_model)
+                LOGGER.info('Pytorch model is compiled.')
+                return
+            else:
+                LOGGER.info('Pytorch version < 2.0. Please update pytorch to a version >= 2.0.')
+        self._model = set_model
+
+    @property
+    def no_opt_model(self):
+        return self._not_opt_model if self._not_opt_model else self.model
 
 
 def check_amp(model):
