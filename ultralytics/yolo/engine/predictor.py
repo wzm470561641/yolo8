@@ -106,6 +106,10 @@ class BasePredictor:
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
         callbacks.add_integration_callbacks(self)
 
+        # Check Night Vision mode
+        if self.args.night_vision:
+            LOGGER.info('Night Vision mode Activated!')
+
     def preprocess(self, img):
         """Prepares input image before inference."""
         pass
