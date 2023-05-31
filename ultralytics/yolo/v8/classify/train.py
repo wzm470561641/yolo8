@@ -1,5 +1,4 @@
 # Ultralytics YOLO 🚀, AGPL-3.0 license
-
 import torch
 import torchvision
 
@@ -10,6 +9,8 @@ from ultralytics.yolo.engine.trainer import BaseTrainer
 from ultralytics.yolo.utils import DEFAULT_CFG, LOGGER, RANK, colorstr
 from ultralytics.yolo.utils.plotting import plot_images, plot_results
 from ultralytics.yolo.utils.torch_utils import is_parallel, strip_optimizer, torch_distributed_zero_first
+
+# from torch.types import Device
 
 
 class ClassificationTrainer(BaseTrainer):
@@ -74,9 +75,9 @@ class ClassificationTrainer(BaseTrainer):
 
     def get_dataloader(self, dataset_path, batch_size=16, rank=0, mode='train'):
         """Returns PyTorch DataLoader with transforms to preprocess images for inference."""
+
         with torch_distributed_zero_first(rank):  # init dataset *.cache only once if DDP
             dataset = self.build_dataset(dataset_path, mode)
-
         loader = build_dataloader(dataset, batch_size, self.args.workers, rank=rank)
         # Attach inference transforms
         if mode != 'train':
@@ -101,6 +102,16 @@ class ClassificationTrainer(BaseTrainer):
         """Returns an instance of ClassificationValidator for validation."""
         self.loss_names = ['loss']
         return v8.classify.ClassificationValidator(self.test_loader, self.save_dir)
+
+    def criterion(self, preds, batch):
+        """Compute the classification loss between predictions and true labels."""
+        loss = torch.nn.functional.cross_entropy(preds,
+                                                 batch['cls'],
+                                                 reduction='sum',
+                                                 weight=self.cls_weight.to(device=self.device) if isinstance(
+                                                     self.cls_weight, torch.Tensor) else None) / self.args.nbs
+        loss_items = loss.detach()
+        return loss, loss_items
 
     def label_loss_items(self, loss_items=None, prefix='train'):
         """

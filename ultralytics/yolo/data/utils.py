@@ -7,12 +7,14 @@ import os
 import subprocess
 import time
 import zipfile
+from glob import glob
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from tarfile import is_tarfile
 
 import cv2
 import numpy as np
+import torch
 from PIL import ExifTags, Image, ImageOps
 from tqdm import tqdm
 
@@ -58,6 +60,31 @@ def exif_size(img):
         if rotation in [6, 8]:  # rotation 270 or 90
             s = (s[1], s[0])
     return s
+
+
+def class_weight(path, kind='auto'):
+    """Kind: 'auto:' -> Automatically computes class weights
+    The class weight can also be manually computed by passing a list of its
+    weight instead of 'auto' """
+
+    if isinstance(kind, int):
+        raise ValueError('Class weights cannot be integar')
+    if kind == 'auto':
+        nc = len(os.listdir(path))
+        path = path
+        s = glob(os.path.join(path, '*'))
+        iters = lambda x: len(glob(os.path.join(x, '*')))
+        classes = list(map(iters, s))
+        if np.mean(np.diff(classes)) != 0:  # Returns class weight is class is imbalanced
+            return torch.tensor(list(map(lambda x: round((sum(classes)) / (nc * x), 6),
+                                         classes))).type(dtype=torch.float32)
+        else:
+            return None  # Returns None meaning classes are balanced
+    elif isinstance(kind, list) and kind != []:  # Manually pass class weights
+        return torch.tensor(kind).type(torch.float32)
+
+    else:
+        return None
 
 
 def verify_image_label(args):
