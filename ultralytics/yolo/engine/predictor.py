@@ -28,7 +28,9 @@ Usage - formats:
                               yolov8n_paddle_model       # PaddlePaddle
 """
 import platform
+import time
 from pathlib import Path
+from threading import Thread
 
 import cv2
 import numpy as np
@@ -107,6 +109,10 @@ class BasePredictor:
         self.batch = None
         self.callbacks = _callbacks or callbacks.get_default_callbacks()
         callbacks.add_integration_callbacks(self)
+
+        self.end = [time.time()] * 5  # TEST
+        self.start = [time.time()] * 5  # TEST
+        self.elapsed = [time.time()] * 5  # TEST
 
     def preprocess(self, im):
         """Prepares input image before inference.
@@ -222,7 +228,12 @@ class BasePredictor:
             self.model.warmup(imgsz=(1 if self.model.pt or self.model.triton else self.dataset.bs, 3, *self.imgsz))
             self.done_warmup = True
 
-        self.seen, self.windows, self.batch, profilers = 0, [], None, (ops.Profile(), ops.Profile(), ops.Profile())
+        use_threads = True
+        profilers = ops.Profile(), ops.Profile(), ops.Profile()
+        self.threads = {}
+        self.fps = None  # TEST
+        self.ifps = None  # TEST
+        self.seen, self.windows, self.batch, quit = 0, [], None, False
         self.run_callbacks('on_predict_start')
         for batch in self.dataset:
             self.run_callbacks('on_predict_batch_start')
@@ -260,16 +271,34 @@ class BasePredictor:
                     s += self.write_results(i, self.results, (p, im, im0))
 
                 if self.args.show and self.plotted_img is not None:
-                    self.show(p)
+                    if (self.fps == None):  # TEST
+                        self.fps = [None] * n  # TEST
+                        self.ifps = [None] * n  # TEST
+                    self.fps[i] = 1 / self.elapsed[0]  # TEST
+                    self.ifps[i] = 1 / profilers[1].dt  # TEST
+                    if (use_threads and not self.batch[3].startswith('image')):
+                        if self.threads.get(i) is None:
+                            self.threads[i] = Thread(target=self.show_thread, args=([p, i]), daemon=True)
+                            self.threads[i].start()
+                        quit = not self.threads[i].is_alive()
+                    else:
+                        self.show(p)
 
                 if self.args.save and self.plotted_img is not None:
                     self.save_preds(vid_cap, i, str(self.save_dir / p.name))
             self.run_callbacks('on_predict_batch_end')
             yield from self.results
 
-            # Print time (inference-only)
+            self.end[i] = time.time()  # TEST
+            self.elapsed[i] = self.end[i] - self.start[i]  # TEST
+            self.start[i] = time.time()  # TEST
+
+            # Print time (inference-only) + TEST Total time per frame
             if self.args.verbose:
-                LOGGER.info(f'{s}{profilers[1].dt * 1E3:.1f}ms')
+                LOGGER.info(f'{s}{profilers[1].dt * 1E3:.1f}ms T:{self.elapsed[0] * 1E3:.1f}ms')
+
+            if (quit):
+                break
 
         # Release assets
         if isinstance(self.vid_writer[-1], cv2.VideoWriter):
@@ -311,6 +340,20 @@ class BasePredictor:
             cv2.resizeWindow(str(p), im0.shape[1], im0.shape[0])
         cv2.imshow(str(p), im0)
         cv2.waitKey(500 if self.batch[3].startswith('image') else 1)  # 1 millisecond
+
+    def show_thread(self, p, i):
+        """Display an image in a window using OpenCV imshow() inside a thread."""
+        if platform.system() == 'Linux' and p not in self.windows:
+            self.windows.append(p)
+            cv2.namedWindow(str(p), cv2.WINDOW_NORMAL | cv2.WINDOW_KEEPRATIO)  # allow window resize (Linux)
+            cv2.resizeWindow(str(p), self.plotted_img.shape[1], self.plotted_img.shape[0])
+        while (True):
+            cv2.putText(self.plotted_img, f'{self.fps[i]:.2f} fps {self.ifps[i]:.2f} ifps', (15, 30),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)  # TEST
+            cv2.imshow(str(p), self.plotted_img)
+            if cv2.waitKey(1) == ord('q'):
+                cv2.destroyAllWindows()
+                break
 
     def save_preds(self, vid_cap, idx, save_path):
         """Save video predictions as mp4 at specified path."""
