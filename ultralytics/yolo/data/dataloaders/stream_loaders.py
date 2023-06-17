@@ -6,6 +6,7 @@ import os
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from queue import Empty, Queue
 from threading import Thread
 from urllib.parse import urlparse
 
@@ -40,12 +41,16 @@ class LoadStreams:
         n = len(sources)
         self.sources = [ops.clean_str(x) for x in sources]  # clean source names for later
         self.imgs, self.fps, self.frames, self.threads = [None] * n, [0] * n, [0] * n, [None] * n
+        self.is_live = [True] * n  # live stream
+        self.imgs_queue = [Queue(maxsize=30)] * n  # buffer size for non-live streams (remote files)
         for i, s in enumerate(sources):  # index, source
             # Start thread to read frames from video stream
             st = f'{i + 1}/{n}: {s}... '
             if urlparse(s).hostname in ('www.youtube.com', 'youtube.com', 'youtu.be'):  # if source is YouTube video
                 # YouTube format i.e. 'https://www.youtube.com/watch?v=Zgi9g1ksQHc' or 'https://youtu.be/Zgi9g1ksQHc'
-                s = get_best_youtube_url(s)
+                s, is_live = get_best_youtube_url(s, use_pafy=False, imgsz=imgsz)
+                if (not is_live) and is_live is not None:
+                    self.is_live[i] = False
             s = eval(s) if s.isnumeric() else s  # i.e. s = '0' local webcam
             if s == 0 and (is_colab() or is_kaggle()):
                 raise NotImplementedError("'source=0' webcam not supported in Colab and Kaggle notebooks. "
@@ -62,6 +67,8 @@ class LoadStreams:
             success, self.imgs[i] = cap.read()  # guarantee first frame
             if not success or self.imgs[i] is None:
                 raise ConnectionError(f'{st}Failed to read images from {s}')
+            if not self.is_live[i]:
+                self.imgs_queue[i].put(self.imgs[i])
             self.threads[i] = Thread(target=self.update, args=([i, cap, s]), daemon=True)
             LOGGER.info(f'{st}Success ✅ ({self.frames[i]} frames of shape {w}x{h} at {self.fps[i]:.2f} FPS)')
             self.threads[i].start()
@@ -80,6 +87,8 @@ class LoadStreams:
                 success, im = cap.retrieve()
                 if success:
                     self.imgs[i] = im
+                    if not self.is_live[i]:
+                        self.imgs_queue[i].put(im)
                 else:
                     LOGGER.warning('WARNING ⚠️ Video stream unresponsive, please check your IP camera connection.')
                     self.imgs[i] = np.zeros_like(self.imgs[i])
@@ -94,11 +103,21 @@ class LoadStreams:
     def __next__(self):
         """Returns source paths, transformed and original images for processing YOLOv5."""
         self.count += 1
-        if not all(x.is_alive() for x in self.threads) or cv2.waitKey(1) == ord('q'):  # q to quit
+        if not all(x.is_alive() for x in self.threads):
             cv2.destroyAllWindows()
             raise StopIteration
 
-        im0 = self.imgs.copy()
+        n = len(self.imgs)
+        im0 = [None] * n
+        for i in range(n):
+            if not self.is_live[i]:
+                try:
+                    im0[i] = self.imgs_queue[i].get_nowait()
+                    continue
+                except Empty:
+                    pass
+            im0[i] = self.imgs[i].copy()  # use last frame from stream
+
         return self.sources, im0, None, ''
 
     def __len__(self):
@@ -336,7 +355,7 @@ def autocast_list(source):
 LOADERS = [LoadStreams, LoadPilAndNumpy, LoadImages, LoadScreenshots]
 
 
-def get_best_youtube_url(url, use_pafy=True):
+def get_best_youtube_url(url, use_pafy=True, imgsz=640):
     """
     Retrieves the URL of the best quality MP4 video stream from a given YouTube video.
 
@@ -349,19 +368,31 @@ def get_best_youtube_url(url, use_pafy=True):
 
     Returns:
         (str): The URL of the best quality MP4 video stream, or None if no suitable stream is found.
+        (bool): Is the youtube stream currently live streaming? or None if no suitable stream is found.
+
     """
+    if isinstance(imgsz, int):
+        imgsz = [imgsz]
     if use_pafy:
         check_requirements(('pafy', 'youtube_dl==2020.12.2'))
         import pafy  # noqa
-        return pafy.new(url).getbest(preftype='mp4').url
+        return pafy.new(url).getbest(preftype='mp4').url, False
     else:
         check_requirements('yt-dlp')
         import yt_dlp
         with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-            info_dict = ydl.extract_info(url, download=False)  # extract info
+            info_dict = ydl.extract_info(url, download=False)  # extract info order: worst to best
+        is_live = info_dict.get('is_live', None)
+        last_best = None
         for f in info_dict.get('formats', None):
             if f['vcodec'] != 'none' and f['acodec'] == 'none' and f['ext'] == 'mp4':
-                return f.get('url', None)
+                last_best = f
+                if max(f['width'], f['height']) >= max(imgsz):
+                    return f.get('url', None), is_live
+        # In case there is no resolution higher than imgz return the last best one like pafy does.
+        if (last_best == None):
+            last_best = f
+        return last_best.get('url', None), is_live
 
 
 if __name__ == '__main__':
