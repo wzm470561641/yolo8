@@ -21,6 +21,7 @@ from torch import distributed as dist
 from torch import nn, optim
 from torch.cuda import amp
 from torch.nn.parallel import DistributedDataParallel as DDP
+from torchvision.transforms.functional import rgb_to_grayscale
 
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
@@ -85,6 +86,7 @@ class BaseTrainer:
         self.device = select_device(self.args.device, self.args.batch)
         self.validator = None
         self.model = None
+        self.ch = None
         self.metrics = None
         self.plots = {}
         init_seeds(self.args.seed + 1 + RANK, deterministic=self.args.deterministic)
@@ -244,6 +246,10 @@ class BaseTrainer:
         gs = max(int(self.model.stride.max() if hasattr(self.model, 'stride') else 32), 32)  # grid size (max stride)
         self.args.imgsz = check_imgsz(self.args.imgsz, stride=gs, floor=gs, max_dim=1)
 
+        first_parameter = next(self.model.parameters())
+        input_shape = first_parameter.size()
+        self.ch = input_shape[1]
+
         # Batch size
         if self.batch_size == -1 and RANK == -1:  # single-GPU only, estimate best batch size
             self.args.batch = self.batch_size = check_train_batch_size(self.model, self.args.imgsz, self.amp)
@@ -340,6 +346,8 @@ class BaseTrainer:
                 # Forward
                 with torch.cuda.amp.autocast(self.amp):
                     batch = self.preprocess_batch(batch)
+                    if self.ch == 1 and batch['img'].shape[1] == 3:
+                        batch['img'] = rgb_to_grayscale(batch['img'])
                     self.loss, self.loss_items = self.model(batch)
                     if RANK != -1:
                         self.loss *= world_size

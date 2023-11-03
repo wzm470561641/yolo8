@@ -24,6 +24,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from torchvision.transforms.functional import rgb_to_grayscale
 
 from ultralytics.cfg import get_cfg, get_save_dir
 from ultralytics.data.utils import check_cls_dataset, check_det_dataset
@@ -156,12 +157,30 @@ class BaseValidator:
         bar = TQDM(self.dataloader, desc=self.get_desc(), total=len(self.dataloader))
         self.init_metrics(de_parallel(model))
         self.jdict = []  # empty before each val
+
+        ch = None
+        try:
+            first_parameter = next(model.parameters())
+            input_shape = first_parameter.size()
+            ch = input_shape[1]
+        except StopIteration:
+            pass
+
         for batch_i, batch in enumerate(bar):
             self.run_callbacks('on_val_batch_start')
             self.batch_i = batch_i
             # Preprocess
             with dt[0]:
                 batch = self.preprocess(batch)
+
+            if ch is None:
+                try:
+                    preds = model(batch['img'], augment=augment)
+                    ch = 3
+                except RuntimeError:
+                    ch = 1
+            elif ch == 1 and batch['img'].shape[1] == 3:
+                batch['img'] = rgb_to_grayscale(batch['img'])
 
             # Inference
             with dt[1]:
