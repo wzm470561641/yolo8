@@ -24,6 +24,7 @@ class Detect(nn.Module):
     shape = None
     anchors = torch.empty(0)  # init
     strides = torch.empty(0)  # init
+    separate_outputs = False
 
     def __init__(self, nc=80, ch=()):
         """Initializes the YOLOv8 detection layer with specified number of classes and channels."""
@@ -42,8 +43,19 @@ class Detect(nn.Module):
     def forward(self, x):
         """Concatenates and returns predicted bounding boxes and class probabilities."""
         shape = x[0].shape  # BCHW
-        for i in range(self.nl):
-            x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
+        if self.separate_outputs and self.export:
+            boxes = []
+            probs = []
+            for i in range(self.nl):
+                a = self.cv2[i](x[i])
+                b = self.cv3[i](x[i])
+                x[i] = torch.cat((a, b), 1)  # save concatenated results
+                boxes.append(a)
+                probs.append(b)
+            return [torch.permute(x, (0, 2, 3, 1)).reshape(x.shape[0], -1, x.shape[1]) for x in boxes + probs]
+        else:
+            for i in range(self.nl):
+                x[i] = torch.cat((self.cv2[i](x[i]), self.cv3[i](x[i])), 1)
         if self.training:
             return x
         elif self.dynamic or self.shape != shape:
@@ -100,9 +112,15 @@ class Segment(Detect):
         bs = p.shape[0]  # batch size
 
         mc = torch.cat([self.cv4[i](x[i]).view(bs, self.nm, -1) for i in range(self.nl)], 2)  # mask coefficients
+        if self.separate_outputs and self.export:
+            mc = torch.cat(
+                [torch.permute(self.cv4[i](x[i]), (0, 2, 3, 1)).reshape(bs, -1, self.nm) for i in range(self.nl)],
+                1)  # mask coefficients
         x = self.detect(self, x)
         if self.training:
             return x, mc, p
+        if self.separate_outputs and self.export:
+            return x, mc, p.permute(0, 2, 3, 1)
         return (torch.cat([x, mc], 1), p) if self.export else (torch.cat([x[0], mc], 1), (x[1], mc, p))
 
 
@@ -126,6 +144,8 @@ class Pose(Detect):
         x = self.detect(self, x)
         if self.training:
             return x, kpt
+        if self.separate_outputs and self.export:
+            return x, torch.permute(kpt, (0, 2, 1))
         pred_kpt = self.kpts_decode(bs, kpt)
         return torch.cat([x, pred_kpt], 1) if self.export else (torch.cat([x[0], pred_kpt], 1), (x[1], kpt))
 
