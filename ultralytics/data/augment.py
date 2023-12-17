@@ -812,56 +812,88 @@ class CopyPaste:
 
 
 class Albumentations:
-    """
-    Albumentations transformations.
-
-    Optional, uninstall package to disable. Applies Blur, Median Blur, convert to grayscale, Contrast Limited Adaptive
-    Histogram Equalization, random change of brightness and contrast, RandomGamma and lowering of image quality by
-    compression.
-    """
-
+    # YOLOv8 Albumentations class (optional, only used if package is installed)
     def __init__(self, p=1.0):
-        """Initialize the transform object for YOLO bbox formatted params."""
         self.p = p
         self.transform = None
         prefix = colorstr('albumentations: ')
         try:
             import albumentations as A
 
-            check_version(A.__version__, '1.0.3', hard=True)  # version requirement
+            check_version(A.__version__, '1.0.3', hard=False)  # version requirement
 
             T = [
                 A.Blur(p=0.01),
                 A.MedianBlur(p=0.01),
                 A.ToGray(p=0.01),
                 A.CLAHE(p=0.01),
-                A.RandomBrightnessContrast(p=0.0),
-                A.RandomGamma(p=0.0),
-                A.ImageCompression(quality_lower=75, p=0.0)]  # transforms
+                A.RandomBrightnessContrast(p=0.5),
+                A.ColorJitter(
+                    brightness=0.1,
+                    contrast=0.1,
+                    saturation=0.1,
+                    hue=0.1,
+                    p=0.5,
+                ),
+                A.RandomShadow(
+                    shadow_roi=(0, 0.5, 1, 1),
+                    num_shadows_lower=1,
+                    num_shadows_upper=2,
+                    shadow_dimension=5,
+                    p=0.5,
+                ),
+                A.RandomRotate90(p=0.5),
+                A.ISONoise(
+                    color_shift=(0.01, 0.05),
+                    intensity=(0.1, 0.5),
+                    p=0.5,
+                ),
+                A.RandomGamma(gamma_limit=(80, 20), p=0.5),
+                A.ImageCompression(quality_lower=70, quality_upper=99, p=0.5), ]  # transforms
             self.transform = A.Compose(T, bbox_params=A.BboxParams(format='yolo', label_fields=['class_labels']))
-
             LOGGER.info(prefix + ', '.join(f'{x}'.replace('always_apply=False, ', '') for x in T if x.p))
         except ImportError:  # package not installed, skip
             pass
         except Exception as e:
             LOGGER.info(f'{prefix}{e}')
+            LOGGER.info(f'{prefix}install: pip install albumentations')
 
     def __call__(self, labels):
-        """Generates object detections and returns a dictionary with detection results."""
         im = labels['img']
+        h, w = im.shape[:2]
         cls = labels['cls']
         if len(cls):
+            masks = labels['instances'].get_masks(h, w)
+            segments = labels['instances'].segments
             labels['instances'].convert_bbox('xywh')
             labels['instances'].normalize(*im.shape[:2][::-1])
             bboxes = labels['instances'].bboxes
             # TODO: add supports of segments and keypoints
             if self.transform and random.random() < self.p:
-                new = self.transform(image=im, bboxes=bboxes, class_labels=cls)  # transformed
+                new = self.transform(image=im, bboxes=bboxes, class_labels=cls, masks=masks)  # transformed
                 if len(new['class_labels']) > 0:  # skip update if no bbox in new im
                     labels['img'] = new['image']
                     labels['cls'] = np.array(new['class_labels'])
-                    bboxes = np.array(new['bboxes'], dtype=np.float32)
-            labels['instances'].update(bboxes=bboxes)
+                    # convert the masks back to segments
+                    new_masks = np.array(new['masks'])
+                    new_segments = []
+                    for mask in new_masks:
+                        contours, _ = cv2.findContours(mask, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
+                        new_contour = contours[0].astype(np.float32) / np.array([w, h])
+                        new_segments.append(new_contour)
+                    bboxes = np.array(new['bboxes'])
+                    # make new segments homogeneous np.array
+                    new_segments_array = np.zeros((len(new_segments), 1000, 2))
+                    for i, segment in enumerate(new_segments):
+                        if len(segment) > 1000:
+                            segment = segment[:999]
+                            segment = np.concatenate((segment, segment[:1]), axis=0)
+                        new_segments_array[i, :len(segment)] = segment.squeeze(axis=1)
+                    segments = np.array(new_segments_array)
+            labels['instances'].update(
+                segments=segments,
+                bboxes=bboxes,
+            )
         return labels
 
 

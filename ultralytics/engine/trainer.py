@@ -17,6 +17,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
+from adabelief_pytorch import AdaBelief
 from torch import distributed as dist
 from torch import nn, optim
 
@@ -663,6 +664,14 @@ class BaseTrainer:
             optimizer = optim.RMSprop(g[2], lr=lr, momentum=momentum)
         elif name == 'SGD':
             optimizer = optim.SGD(g[2], lr=lr, momentum=momentum, nesterov=True)
+        elif name == 'AdaBelief':
+            optimizer = AdaBelief(g[2],
+                                  lr=lr,
+                                  eps=1e-16,
+                                  betas=(0.9, 0.999),
+                                  weight_decouple=False,
+                                  rectify=False,
+                                  weight_decay=1e-4)
         else:
             raise NotImplementedError(
                 f"Optimizer '{name}' not found in list of available optimizers "
