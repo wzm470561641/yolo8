@@ -757,7 +757,7 @@ def masks2segments(masks, strategy='largest'):
         segments (List): list of segment masks
     """
     segments = []
-    for x in masks.int().cpu().numpy().astype('uint8'):
+    for x in (masks.int().cpu().numpy() if isinstance(masks, torch.Tensor) else masks).astype('uint8'):
         c = cv2.findContours(x, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)[0]
         if c:
             if strategy == 'concat':  # concatenate all segments
