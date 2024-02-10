@@ -175,12 +175,13 @@ class Results(SimpleClass):
         pil=False,
         img=None,
         im_gpu=None,
-        kpt_radius=5,
         kpt_line=True,
         labels=True,
         boxes=True,
         masks=True,
         probs=True,
+        color_list=None,
+        **kwargs,  # deprecated args TODO: remove support in 8.2
     ):
         """
         Plots the detection results on an input RGB image. Accepts a numpy array (cv2) or a PIL Image.
@@ -198,7 +199,8 @@ class Results(SimpleClass):
             labels (bool): Whether to plot the label of bounding boxes.
             boxes (bool): Whether to plot the bounding boxes.
             masks (bool): Whether to plot the masks.
-            probs (bool): Whether to plot classification probability
+            probs (bool): Whether to plot classification probability.
+            color_list (list): Specify the color used to display the box. If value is None, use default color.
 
         Returns:
             (numpy.ndarray): A numpy array of the annotated image.
@@ -250,12 +252,17 @@ class Results(SimpleClass):
 
         # Plot Detect results
         if pred_boxes is not None and show_boxes:
-            for d in reversed(pred_boxes):
+            for index, d in enumerate(reversed(pred_boxes)):
                 c, conf, id = int(d.cls), float(d.conf) if conf else None, None if d.id is None else int(d.id.item())
                 name = ("" if id is None else f"id:{id} ") + names[c]
                 label = (f"{name} {conf:.2f}" if conf else name) if labels else None
                 box = d.xyxyxyxy.reshape(-1, 4, 2).squeeze() if is_obb else d.xyxy.squeeze()
-                annotator.box_label(box, label, color=colors(c, True), rotated=is_obb)
+                annotator.box_label(
+                    box,
+                    label,
+                    color=colors(c, True) if color_list is None else color_list[len(pred_boxes) - index - 1],
+                    rotated=is_obb,
+                )
 
         # Plot Classify results
         if pred_probs is not None and show_probs:
