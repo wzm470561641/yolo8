@@ -5,7 +5,6 @@ import math
 import os
 import random
 from copy import deepcopy
-from multiprocessing.pool import ThreadPool
 from pathlib import Path
 from typing import Optional
 
@@ -14,7 +13,7 @@ import numpy as np
 import psutil
 from torch.utils.data import Dataset
 
-from ultralytics.utils import DEFAULT_CFG, LOCAL_RANK, LOGGER, NUM_THREADS, TQDM
+from ultralytics.utils import DEFAULT_CFG, LOGGER
 from .utils import FORMATS_HELP_MSG, HELP_URL, IMG_FORMATS
 
 
@@ -86,12 +85,12 @@ class BaseDataset(Dataset):
         self.buffer = []  # buffer size = batch size
         self.max_buffer_length = min((self.ni, self.batch_size * 8, 1000)) if self.augment else 0
 
-        # Cache images (options are cache = True, False, None, "ram", "disk")
+        # Cache images
         self.ims, self.im_hw0, self.im_hw = [None] * self.ni, [None] * self.ni, [None] * self.ni
         self.npy_files = [Path(f).with_suffix(".npy") for f in self.im_files]
-        self.cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
-        if (self.cache == "ram" and self.check_cache_ram()) or self.cache == "disk":
-            self.cache_images()
+        cache = cache.lower() if isinstance(cache, str) else "ram" if cache is True else None
+        self.cache_disk = cache == "disk"  # cache images on hard drive as uncompressed *.npy files
+        self.cache_ram = cache == "ram" and self.check_cache_ram()  # cache images into RAM
 
         # Transforms
         self.transforms = self.build_transforms(hyp=hyp)
@@ -144,16 +143,13 @@ class BaseDataset(Dataset):
     def load_image(self, i, rect_mode=True):
         """Loads 1 image from dataset index 'i', returns (im, resized hw)."""
         im, f, fn = self.ims[i], self.im_files[i], self.npy_files[i]
-        if im is None:  # not cached in RAM
-            if fn.exists():  # load npy
-                try:
-                    im = np.load(fn)
-                except Exception as e:
-                    LOGGER.warning(f"{self.prefix}WARNING ⚠️ Removing corrupt *.npy image file {fn} due to: {e}")
-                    Path(fn).unlink(missing_ok=True)
-                    im = cv2.imread(f)  # BGR
-            else:  # read image
-                im = cv2.imread(f)  # BGR
+        if im is None:
+            if self.cache_disk:
+                if not fn.exists():
+                    np.save(fn.as_posix(), cv2.imread(f), allow_pickle=False)
+                im = np.load(fn)
+            else:
+                im = cv2.imread(f)
             if im is None:
                 raise FileNotFoundError(f"Image Not Found {f}")
 
@@ -166,40 +162,19 @@ class BaseDataset(Dataset):
             elif not (h0 == w0 == self.imgsz):  # resize by stretching image to square imgsz
                 im = cv2.resize(im, (self.imgsz, self.imgsz), interpolation=cv2.INTER_LINEAR)
 
+            if self.cache_ram or self.augment:
+                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]
             # Add to buffer if training with augmentations
             if self.augment:
-                self.ims[i], self.im_hw0[i], self.im_hw[i] = im, (h0, w0), im.shape[:2]  # im, hw_original, hw_resized
                 self.buffer.append(i)
                 if len(self.buffer) >= self.max_buffer_length:
                     j = self.buffer.pop(0)
-                    if self.cache != "ram":
+                    if not self.cache_ram:
                         self.ims[j], self.im_hw0[j], self.im_hw[j] = None, None, None
 
             return im, (h0, w0), im.shape[:2]
 
         return self.ims[i], self.im_hw0[i], self.im_hw[i]
-
-    def cache_images(self):
-        """Cache images to memory or disk."""
-        b, gb = 0, 1 << 30  # bytes of cached images, bytes per gigabytes
-        fcn, storage = (self.cache_images_to_disk, "Disk") if self.cache == "disk" else (self.load_image, "RAM")
-        with ThreadPool(NUM_THREADS) as pool:
-            results = pool.imap(fcn, range(self.ni))
-            pbar = TQDM(enumerate(results), total=self.ni, disable=LOCAL_RANK > 0)
-            for i, x in pbar:
-                if self.cache == "disk":
-                    b += self.npy_files[i].stat().st_size
-                else:  # 'ram'
-                    self.ims[i], self.im_hw0[i], self.im_hw[i] = x  # im, hw_orig, hw_resized = load_image(self, i)
-                    b += self.ims[i].nbytes
-                pbar.desc = f"{self.prefix}Caching images ({b / gb:.1f}GB {storage})"
-            pbar.close()
-
-    def cache_images_to_disk(self, i):
-        """Saves an image as an *.npy file for faster loading."""
-        f = self.npy_files[i]
-        if not f.exists():
-            np.save(f.as_posix(), cv2.imread(self.im_files[i]), allow_pickle=False)
 
     def check_cache_ram(self, safety_margin=0.5):
         """Check image caching requirements vs available memory."""
@@ -213,7 +188,6 @@ class BaseDataset(Dataset):
         mem = psutil.virtual_memory()
         success = mem_required < mem.available  # to cache or not to cache, that is the question
         if not success:
-            self.cache = None
             LOGGER.info(
                 f"{self.prefix}{mem_required / gb:.1f}GB RAM required to cache images "
                 f"with {int(safety_margin * 100)}% safety margin but only "
