@@ -28,6 +28,7 @@ from ultralytics.utils import (
     colorstr,
     emojis,
     is_dir_writeable,
+    json_save,
     yaml_load,
     yaml_save,
 )
@@ -250,7 +251,29 @@ def find_dataset_yaml(path: Path) -> Path:
     return files[0]
 
 
-def check_det_dataset(dataset, autodownload=True):
+def find_dataset_json(path: Path) -> Path:
+    """
+    Find and return the JSON file associated with a Detect, Segment or Pose dataset.
+
+    This function searches for a JSON file at the root level of the provided directory first, and if not found, it
+    performs a recursive search. It prefers YAML files that have the same stem as the provided path. An AssertionError
+    is raised if no JSON file is found or if multiple JSON files are found.
+
+    Args:
+        path (Path): The directory path to search for the JSON file.
+
+    Returns:
+        (Path): The path of the found JSON file.
+    """
+    files = list(path.glob("*.json")) or list(path.rglob("*.json"))  # try root level first and then recursive
+    assert files, f"No JSON file found in '{path.resolve()}'"
+    if len(files) > 1:
+        files = [f for f in files if f.stem == path.stem]  # prefer *.yaml files that match
+    assert len(files) == 1, f"Expected 1 JSON file in '{path.resolve()}', but found {len(files)}.\n{files}"
+    return files[0]
+
+
+def check_det_dataset(dataset, extension, autodownload=True):
     """
     Download, verify, and/or unzip a dataset if not found locally.
 
@@ -272,11 +295,20 @@ def check_det_dataset(dataset, autodownload=True):
     extract_dir = ""
     if zipfile.is_zipfile(file) or is_tarfile(file):
         new_dir = safe_download(file, dir=DATASETS_DIR, unzip=True, delete=False)
-        file = find_dataset_yaml(DATASETS_DIR / new_dir)
+        file = (
+            find_dataset_yaml(DATASETS_DIR / new_dir)
+            if extension == "yaml"
+            else find_dataset_json(DATASETS_DIR / new_dir)
+        )
         extract_dir, autodownload = file.parent, False
 
     # Read YAML
-    data = yaml_load(file, append_filename=True)  # dictionary
+    if extension == "yaml" or extension == "yml":
+        data = yaml_load(file, append_filename=True)  # dictionary
+
+    # Read JSON
+    if extension == "json":
+        data = json.load(file)
 
     # Checks
     for k in "train", "val":
@@ -459,14 +491,23 @@ class HUBDatasetStats:
             data = check_cls_dataset(unzip_dir)
             data["path"] = unzip_dir
         else:  # detect, segment, pose
-            _, data_dir, yaml_path = self._unzip(Path(path))
+            _, data_dir, path = self._unzip(Path(path))
             try:
                 # Load YAML with checks
-                data = yaml_load(yaml_path)
-                data["path"] = ""  # strip path since YAML should be in dataset root for all HUB datasets
-                yaml_save(yaml_path, data)
-                data = check_det_dataset(yaml_path, autodownload)  # dict
-                data["path"] = data_dir  # YAML path should be set to '' (relative) or parent (absolute)
+                if str(path).split(".")[-1] == "yaml":
+                    data = yaml_load(path)
+                    data["path"] = ""  # strip path since YAML should be in dataset root for all HUB datasets
+                    yaml_save(path, data)
+                    data = check_det_dataset(path, "yaml", autodownload)  # dict
+                    data["path"] = data_dir  # YAML path should be set to '' (relative) or parent (absolute)
+
+                elif str(path).split(".")[-1] == "json":
+                    data = json.load(path)
+                    data["path"] = ""  # strip path since JSON should be in dataset root for all HUB datasets
+                    json_save(path, data)
+                    data = check_det_dataset(path, "json", autodownload)  # dict
+                    data["path"] = data_dir  # JSON path should be set to '' (relative) or parent (absolute)
+
             except Exception as e:
                 raise Exception("error/HUB/dataset_stats/init") from e
 
