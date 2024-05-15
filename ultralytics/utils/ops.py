@@ -174,6 +174,7 @@ def non_max_suppression(
     max_wh=7680,
     in_place=True,
     rotated=False,
+    return_all_scores=False,
 ):
     """
     Perform non-maximum suppression (NMS) on a set of boxes, with support for masks and multiple labels per box.
@@ -197,13 +198,20 @@ def non_max_suppression(
         nc (int, optional): The number of classes output by the model. Any indices after this will be considered masks.
         max_time_img (float): The maximum time (seconds) for processing one image.
         max_nms (int): The maximum number of boxes into torchvision.ops.nms().
-        max_wh (int): The maximum box width and height in pixels.
+        max_wh (int): The maximum box width and height in pixels
+        return_all_scores (bool): If True, return all scores instead of only the max score.
         in_place (bool): If True, the input prediction tensor will be modified in place.
 
     Returns:
-        (List[torch.Tensor]): A list of length batch_size, where each element is a tensor of
-            shape (num_boxes, 6 + num_masks) containing the kept boxes, with columns
-            (x1, y1, x2, y2, confidence, class, mask1, mask2, ...).
+        (List[torch.Tensor] | Tuple[List[torch.Tensor], List[torch.Tensor]]): A list of length batch_size,
+            where each element is a tensor of shape (num_boxes, 6 + num_masks) containing the kept boxes,
+            with columns (x1, y1, x2, y2, confidence, class, mask1, mask2, ...).
+
+            If the parameter return_all_scores is set to True,
+            the function will return a tuple consisting of two lists.
+            The first list is the aforementioned list.
+            The second list contains a tensor of shape (num_boxes, num_classes),
+            which holds the scores for each class.
     """
     import torchvision  # scope for faster 'import ultralytics'
 
@@ -233,6 +241,7 @@ def non_max_suppression(
 
     t = time.time()
     output = [torch.zeros((0, 6 + nm), device=prediction.device)] * bs
+    output_scores = [torch.zeros((0, nc), device=prediction.device)] * bs
     for xi, x in enumerate(prediction):  # image index, image inference
         # Apply constraints
         # x[((x[:, 2:4] < min_wh) | (x[:, 2:4] > max_wh)).any(1), 4] = 0  # width-height
@@ -295,11 +304,13 @@ def non_max_suppression(
         #         i = i[iou.sum(1) > 1]  # require redundancy
 
         output[xi] = x[i]
+        if return_all_scores:
+            output_scores[xi] = cls[i]
         if (time.time() - t) > time_limit:
             LOGGER.warning(f"WARNING ⚠️ NMS time limit {time_limit:.3f}s exceeded")
             break  # time limit exceeded
 
-    return output
+    return (output, output_scores) if return_all_scores else output
 
 
 def clip_boxes(boxes, shape):

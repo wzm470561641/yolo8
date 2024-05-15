@@ -94,7 +94,17 @@ class Results(SimpleClass):
         tojson(normalize=False): Converts detection results to JSON format.
     """
 
-    def __init__(self, orig_img, path, names, boxes=None, masks=None, probs=None, keypoints=None, obb=None) -> None:
+    def __init__(
+        self,
+        orig_img,
+        path,
+        names,
+        boxes=None,
+        masks=None,
+        probs=None,
+        keypoints=None,
+        obb=None,
+    ) -> None:
         """
         Initialize the Results class.
 
@@ -115,7 +125,11 @@ class Results(SimpleClass):
         self.probs = Probs(probs) if probs is not None else None
         self.keypoints = Keypoints(keypoints, self.orig_shape) if keypoints is not None else None
         self.obb = OBB(obb, self.orig_shape) if obb is not None else None
-        self.speed = {"preprocess": None, "inference": None, "postprocess": None}  # milliseconds per image
+        self.speed = {
+            "preprocess": None,
+            "inference": None,
+            "postprocess": None,
+        }  # milliseconds per image
         self.names = names
         self.path = path
         self.save_dir = None
@@ -274,14 +288,18 @@ class Results(SimpleClass):
         # Plot Detect results
         if pred_boxes is not None and show_boxes:
             for d in reversed(pred_boxes):
-                c, conf, id = int(d.cls), float(d.conf) if conf else None, None if d.id is None else int(d.id.item())
+                c, conf, id = (
+                    int(d.cls),
+                    float(d.conf) if conf else None,
+                    None if d.id is None else int(d.id.item()),
+                )
                 name = ("" if id is None else f"id:{id} ") + names[c]
                 label = (f"{name} {conf:.2f}" if conf else name) if labels else None
                 box = d.xyxyxyxy.reshape(-1, 4, 2).squeeze() if is_obb else d.xyxy.squeeze()
                 annotator.box_label(box, label, color=colors(c, True), rotated=is_obb)
 
         # Plot Classify results
-        if pred_probs is not None and show_probs:
+        if pred_probs is not None and show_probs and len(pred_probs.data.shape) == 1:
             text = ",\n".join(f"{names[j] if names else j} {pred_probs.data[j]:.2f}" for j in pred_probs.top5)
             x = round(self.orig_shape[0] * 0.03)
             annotator.text([x, x], text, txt_color=(255, 255, 255))  # TODO: allow setting colors
@@ -319,7 +337,7 @@ class Results(SimpleClass):
         boxes = self.boxes
         if len(self) == 0:
             return log_string if probs is not None else f"{log_string}(no detections), "
-        if probs is not None:
+        if probs is not None and len(probs.data.shape) == 1:  # When classify task. len()=2 implies detect task.
             log_string += f"{', '.join(f'{self.names[j]} {probs.data[j]:.2f}' for j in probs.top5)}, "
         if boxes:
             for c in boxes.cls.unique():
@@ -341,13 +359,17 @@ class Results(SimpleClass):
         probs = self.probs
         kpts = self.keypoints
         texts = []
-        if probs is not None:
+        if probs is not None and len(probs.data.shape) == 1:
             # Classify
             [texts.append(f"{probs.data[j]:.2f} {self.names[j]}") for j in probs.top5]
         elif boxes:
             # Detect/segment/pose
             for j, d in enumerate(boxes):
-                c, conf, id = int(d.cls), float(d.conf), None if d.id is None else int(d.id.item())
+                c, conf, id = (
+                    int(d.cls),
+                    float(d.conf),
+                    None if d.id is None else int(d.id.item()),
+                )
                 line = (c, *(d.xyxyxyxyn.view(-1) if is_obb else d.xywhn.view(-1)))
                 if masks:
                     seg = masks[j].xyn[0].copy().reshape(-1)  # reversed mask.xyn, (n,2) to (n*2)
@@ -371,7 +393,7 @@ class Results(SimpleClass):
             save_dir (str | pathlib.Path): Save path.
             file_name (str | pathlib.Path): File name.
         """
-        if self.probs is not None:
+        if self.probs is not None and len(self.probs.data.shape) == 1:
             LOGGER.warning("WARNING ⚠️ Classify task do not support `save_crop`.")
             return
         if self.obb is not None:
@@ -389,13 +411,15 @@ class Results(SimpleClass):
         """Convert the results to a summarized format."""
         # Create list of detection dictionaries
         results = []
-        if self.probs is not None:
+        if self.probs is not None and len(self.probs.data.shape) == 1:
             class_id = self.probs.top1
             results.append(
                 {
                     "name": self.names[class_id],
                     "class": class_id,
                     "confidence": round(self.probs.top1conf.item(), decimals),
+                    "top5": self.probs.top5,
+                    "top5confidences": [round(c.item(), decimals) for c in self.probs.top5conf],
                 }
             )
             return results
@@ -425,6 +449,8 @@ class Results(SimpleClass):
                     "y": (y / h).numpy().round(decimals).tolist(),
                     "visible": visible.numpy().round(decimals).tolist(),
                 }
+            if self.probs is not None:
+                result["probs"] = self.probs.data[i].tolist()
             results.append(result)
 
         return results
@@ -620,8 +646,8 @@ class Probs(BaseTensor):
     A class for storing and manipulating classification predictions.
 
     Attributes:
-        top1 (int): Index of the top 1 class.
-        top5 (list[int]): Indices of the top 5 classes.
+        top1 (int|list[int]): Index of the top 1 class.
+        top5 (list[int]|list[list[int]]): Indices of the top 5 classes.
         top1conf (torch.Tensor): Confidence of the top 1 class.
         top5conf (torch.Tensor): Confidences of the top 5 classes.
 
@@ -640,25 +666,25 @@ class Probs(BaseTensor):
     @lru_cache(maxsize=1)
     def top1(self):
         """Return the index of top 1."""
-        return int(self.data.argmax())
+        return self.data.argmax(-1).tolist()
 
     @property
     @lru_cache(maxsize=1)
     def top5(self):
         """Return the indices of top 5."""
-        return (-self.data).argsort(0)[:5].tolist()  # this way works with both torch and numpy.
+        return (-self.data).argsort(-1)[..., :5].tolist()
 
     @property
     @lru_cache(maxsize=1)
     def top1conf(self):
         """Return the confidence of top 1."""
-        return self.data[self.top1]
+        return self.data.max(axis=-1).values
 
     @property
     @lru_cache(maxsize=1)
     def top5conf(self):
         """Return the confidences of top 5."""
-        return self.data[self.top5]
+        return self.data.topk(5, dim=-1).values
 
 
 class OBB(BaseTensor):
