@@ -18,6 +18,7 @@ import cv2
 import numpy as np
 import requests
 import torch
+from packaging import version
 
 from ultralytics.utils import (
     ASSETS,
@@ -736,3 +737,4 @@ def cuda_is_available() -> bool:
 
 # Define constants
 IS_PYTHON_3_12 = PYTHON_VERSION.startswith("3.12")
+IS_PYTHON_GE_3_10 = version.parse(PYTHON_VERSION) >= version.parse("3.10")
