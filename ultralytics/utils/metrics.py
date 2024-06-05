@@ -340,7 +340,11 @@ class ConfusionMatrix:
         detections = detections[detections[:, 4] > self.conf]
         gt_classes = gt_cls.int()
         detection_classes = detections[:, 5].int()
-        is_obb = (detections.shape[1] == 7 and gt_bboxes.shape[1] == 5) or (detections.shape[1] == 39 and gt_bboxes.shape[1] == 5)  or (detections.shape[1] >9 and gt_bboxes.shape[1] == 5)  # with additional `angle` dimension
+        is_obb = (
+            (detections.shape[1] == 7 and gt_bboxes.shape[1] == 5)
+            or (detections.shape[1] == 39 and gt_bboxes.shape[1] == 5)
+            or (detections.shape[1] > 9 and gt_bboxes.shape[1] == 5)
+        )  # with additional `angle` dimension
         iou = (
             batch_probiou(gt_bboxes, torch.cat([detections[:, :4], detections[:, -1:]], dim=-1))
             if is_obb
@@ -1289,7 +1293,6 @@ class OBBMetrics(SimpleClass):
         return []
 
 
-
 class OBB_SegmentMetrics(SimpleClass):
     """
     Calculates and aggregates detection and segmentation metrics over a given set of classes.
@@ -1364,7 +1367,7 @@ class OBB_SegmentMetrics(SimpleClass):
             on_plot=self.on_plot,
             save_dir=self.save_dir,
             names=self.names,
-            prefix="rBox"
+            prefix="rBox",
         )[2:]
         self.box.nc = len(self.names)
         self.box.update(results_rbox)
@@ -1506,7 +1509,7 @@ class OBB_PoseMetrics(SegmentMetrics):
             on_plot=self.on_plot,
             save_dir=self.save_dir,
             names=self.names,
-            prefix="rBox"
+            prefix="rBox",
         )[2:]
         self.box.nc = len(self.names)
         self.box.update(results_rbox)
