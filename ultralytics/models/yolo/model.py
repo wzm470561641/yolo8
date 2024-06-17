@@ -4,7 +4,16 @@ from pathlib import Path
 
 from ultralytics.engine.model import Model
 from ultralytics.models import yolo
-from ultralytics.nn.tasks import ClassificationModel, DetectionModel, OBBModel, PoseModel, SegmentationModel, WorldModel
+from ultralytics.nn.tasks import (
+    ClassificationModel,
+    DetectionModel,
+    OBB_PoseModel,
+    OBB_SegmentationModel,
+    OBBModel,
+    PoseModel,
+    SegmentationModel,
+    WorldModel,
+)
 from ultralytics.utils import ROOT, yaml_load
 
 
@@ -15,7 +24,7 @@ class YOLO(Model):
         """Initialize YOLO model, switching to YOLOWorld if model filename contains '-world'."""
         path = Path(model)
         if "-world" in path.stem and path.suffix in {".pt", ".yaml", ".yml"}:  # if YOLOWorld PyTorch model
-            new_instance = YOLOWorld(path, verbose=verbose)
+            new_instance = YOLOWorld(path)
             self.__class__ = type(new_instance)
             self.__dict__ = new_instance.__dict__
         else:
@@ -55,6 +64,18 @@ class YOLO(Model):
                 "trainer": yolo.obb.OBBTrainer,
                 "validator": yolo.obb.OBBValidator,
                 "predictor": yolo.obb.OBBPredictor,
+            },
+            "obb_segment": {
+                "model": OBB_SegmentationModel,
+                "trainer": yolo.obb_segment.OBB_SegmentationTrainer,
+                "validator": yolo.obb_segment.OBB_SegmentationValidator,
+                "predictor": yolo.obb_segment.OBB_SegmentationPredictor,
+            },
+            "obb_pose": {
+                "model": OBB_PoseModel,
+                "trainer": yolo.obb_pose.OBB_PoseTrainer,
+                "validator": yolo.obb_pose.OBB_PoseValidator,
+                "predictor": yolo.obb_pose.OBB_PosePredictor,
             },
         }
 

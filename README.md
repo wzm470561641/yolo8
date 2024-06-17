@@ -100,6 +100,38 @@ See YOLOv8 [Python Docs](https://docs.ultralytics.com/usage/python) for more exa
 
 </details>
 
+### obb_segment
+
+**Train**
+
+```shell
+#Train your obb_segment dataset.
+yolo obb_segment  mode=train model=ultralytics/cfg/models/v8/yolov8n-obb-segment.yaml  data=ultralytics/cfg/datasets/project/seg/coco8-seg.yaml batch=8 epochs=100 imgsz=640 workers=0 device=0
+```
+
+**val**
+
+```shell
+#Val your obb_segment dataset.
+yolo obb_segment  mode=val model=runs/obb_segment/train/weights/best.pt   data=ultralytics/cfg/datasets/project/seg/coco8-seg.yaml  batch=8 
+```
+
+### obb_pose
+
+**Train**
+
+```shell
+#Train your obb_pose dataset.
+yolo obb_pose  mode=train model=ultralytics/cfg/models/v8/yolov8n-obb-pose.yaml  data=ultralytics/cfg/datasets/your_obb_pose.yaml batch=8 epochs=100 imgsz=640 workers=0 device=0
+```
+
+**val**
+
+```shell
+#Val your obb_segment dataset.
+yolo obb_pose  mode=val model=runs/obb_pose/train/weights/best.pt   data=ultralytics/cfg/datasets/your_obb_pose.yaml  batch=8 
+```
+
 ### Notebooks
 
 Ultralytics provides interactive notebooks for YOLOv8, covering training, validation, tracking, and more. Each notebook is paired with a [YouTube](https://youtube.com/ultralytics?sub_confirmation=1) tutorial, making it easy to learn and implement advanced YOLOv8 features.

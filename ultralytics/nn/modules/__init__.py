@@ -62,7 +62,7 @@ from .conv import (
     RepConv,
     SpatialAttention,
 )
-from .head import OBB, Classify, Detect, Pose, RTDETRDecoder, Segment, WorldDetect
+from .head import OBB, Classify, Detect, OBB_Pose, OBB_Segment, Pose, RTDETRDecoder, Segment, WorldDetect
 from .transformer import (
     AIFI,
     MLP,
@@ -135,4 +135,6 @@ __all__ = (
     "CBFuse",
     "CBLinear",
     "Silence",
+    "OBB_Segment",
+    "OBB_Pose",
 )
