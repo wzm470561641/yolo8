@@ -29,6 +29,9 @@ from ultralytics.utils import (
 )
 from ultralytics.utils.downloads import download
 from ultralytics.utils.torch_utils import TORCH_1_9
+from ultralytics.data.utils import check_det_dataset
+from ultralytics.data.dataset import YOLODataset
+import psutil
 
 
 def test_model_forward():
@@ -179,7 +182,6 @@ def test_train_scratch():
     model = YOLO(CFG)
     model.train(data="coco8.yaml", epochs=2, imgsz=32, cache="disk", batch=-1, close_mosaic=1, name="model")
     model(SOURCE)
-
 
 def test_train_pretrained():
     """Test training the YOLO model from a pre-trained state."""
@@ -577,3 +579,20 @@ def test_yolo_world():
         close_mosaic=1,
         trainer=WorldTrainerFromScratch,
     )
+
+
+def test_dataset_mem_cache_limit():
+    """Test dataset memory cache limit."""
+    yaml_data = check_det_dataset('coco8.yaml')
+    
+    mb = 1024 * 1024
+    
+    mem_cache_limit = 0.7
+    mem = psutil.virtual_memory()
+    yolo_dataset = YOLODataset(img_path=yaml_data['train'], data=yaml_data, cache="ram", mem_cache_limit=mem_cache_limit)
+    assert abs(yolo_dataset.mem_cache_limit_bytes - mem.available * mem_cache_limit) < 100 * mb # difference will not be too much
+    
+    mem_cache_limit = 1024 * mb
+    yolo_dataset = YOLODataset(img_path=yaml_data['train'], data=yaml_data, cache="ram", mem_cache_limit=mem_cache_limit)
+    assert yolo_dataset.mem_cache_limit_bytes == mem_cache_limit
+
