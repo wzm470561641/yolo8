@@ -83,6 +83,8 @@ try:
 except ImportError:
     thop = None
 
+YAML_MODS = r"((-pose|-seg|-obb|-cls))?"
+
 
 class BaseModel(nn.Module):
     """The BaseModel class serves as a base class for all the models in the Ultralytics YOLO family."""
@@ -900,7 +902,7 @@ def parse_model(d, ch, verbose=True):  # model_dict, input_channels(3)
         LOGGER.info(f"\n{'':>3}{'from':>20}{'n':>3}{'params':>10}  {'module':<45}{'arguments':<30}")
     ch = [ch]
     layers, save, c2 = [], [], ch[-1]  # layers, savelist, ch out
-    for i, (f, n, m, args) in enumerate(d["backbone"] + d["head"]):  # from, number, module, args
+    for i, (f, n, m, args) in enumerate(d["backbone"] + d.get("neck", []) + d["head"]):  # from, number, module, args
         m = getattr(torch.nn, m[3:]) if "nn." in m else globals()[m]  # get module
         for j, a in enumerate(args):
             if isinstance(a, str):
@@ -1006,9 +1008,14 @@ def yaml_model_load(path):
         LOGGER.warning(f"WARNING ⚠️ Ultralytics YOLO P6 models now use -p6 suffix. Renaming {path.stem} to {new_stem}.")
         path = path.with_name(new_stem + path.suffix)
 
-    unified_path = re.sub(r"(\d+)([nslmx])(.+)?$", r"\1\3", str(path))  # i.e. yolov8x.yaml -> yolov8.yaml
-    yaml_file = check_yaml(unified_path, hard=False) or check_yaml(path)
-    d = yaml_load(yaml_file)  # model dict
+    unified_path = re.sub(rf"(\d+)([nslmx])?{YAML_MODS}(.+)?$", r"\1\5", str(path))
+    key = re.sub(r"(.*)(\d+)([nslmx])(.+)?$", r"\1\2\4", path.stem)
+    yaml_file = check_yaml(unified_path, hard=False) or check_yaml(key + ".yaml", hard=False) or check_yaml(path)
+    d = yaml_load(yaml_file, append_filename=True)  # model dict
+    if d.get(key):  # remove old keys
+        for x in ["backbone", "neck", "head"]:
+            d.pop(x)
+        d = {**d, **d[key]}
     d["scale"] = guess_model_scale(path)
     d["yaml_file"] = str(path)
     return d

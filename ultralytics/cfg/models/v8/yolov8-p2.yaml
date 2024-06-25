@@ -3,6 +3,7 @@
 
 # Parameters
 nc: 80 # number of classes
+kpt_shape: [17, 3] # number of keypoints, number of dims (2 for x,y or 3 for x,y,visible)
 scales: # model compound scaling constants, i.e. 'model=yolov8n.yaml' will call yolov8.yaml with scale 'n'
   # [depth, width, max_channels]
   n: [0.33, 0.25, 1024]
@@ -12,8 +13,7 @@ scales: # model compound scaling constants, i.e. 'model=yolov8n.yaml' will call 
   x: [1.00, 1.25, 512]
 
 # YOLOv8.0 backbone
-backbone:
-  # [from, repeats, module, args]
+backbone: &backbone # [from, repeats, module, args]
   - [-1, 1, Conv, [64, 3, 2]] # 0-P1/2
   - [-1, 1, Conv, [128, 3, 2]] # 1-P2/4
   - [-1, 3, C2f, [128, True]]
@@ -23,10 +23,9 @@ backbone:
   - [-1, 6, C2f, [512, True]]
   - [-1, 1, Conv, [1024, 3, 2]] # 7-P5/32
   - [-1, 3, C2f, [1024, True]]
-  - [-1, 1, SPPF, [1024, 5]] # 9
 
-# YOLOv8.0-p2 head
-head:
+neck: &neck
+  - [-1, 1, SPPF, [1024, 5]] # 9
   - [-1, 1, nn.Upsample, [None, 2, "nearest"]]
   - [[-1, 6], 1, Concat, [1]] # cat backbone P4
   - [-1, 3, C2f, [512]] # 12
@@ -51,4 +50,36 @@ head:
   - [[-1, 9], 1, Concat, [1]] # cat head P5
   - [-1, 3, C2f, [1024]] # 27 (P5/32-large)
 
-  - [[18, 21, 24, 27], 1, Detect, [nc]] # Detect(P2, P3, P4, P5)
+head:
+  detect: &detect
+    - [[18, 21, 24, 27], 1, Detect, [nc]] # Detect(P2, P3, P4, P5)
+
+  segment: &segment
+    - [[18, 21, 24, 27], 1, Segment, [nc, 32, 256]] # Segment(P2, P3, P4, P5)
+
+  pose: &pose
+    - [[18, 21, 24, 27], 1, Pose, [nc, kpt_shape]] # Pose(P2, P3, P4, P5)
+
+  obb: &obb
+    - [[18, 21, 24, 27], 1, OBB, [nc, 1]] # OBB(P2, P3, P4, P5)
+
+# Models
+yolov8-p2:
+  backbone: *backbone
+  neck: *neck
+  head: *detect
+
+yolov8-seg-p2:
+  backbone: *backbone
+  neck: *neck
+  head: *segment
+
+yolov8-pose-p2:
+  backbone: *backbone
+  neck: *neck
+  head: *pose
+
+yolov8-obb-p2:
+  backbone: *backbone
+  neck: *neck
+  head: *obb
