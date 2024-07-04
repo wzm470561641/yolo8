@@ -9,7 +9,7 @@ import torch.nn.functional as F
 
 from ultralytics.models.yolo.detect import DetectionValidator
 from ultralytics.utils import LOGGER, NUM_THREADS, ops
-from ultralytics.utils.metrics import OBB_SegmentMetrics, OBBMetrics, batch_probiou, mask_iou
+from ultralytics.utils.metrics import OBB_SegmentMetrics, batch_probiou, mask_iou
 from ultralytics.utils.plotting import output_to_rotated_segment_target, plot_images
 
 
