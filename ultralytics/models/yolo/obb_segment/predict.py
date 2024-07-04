@@ -61,7 +61,7 @@ class OBB_SegmentationPredictor(DetectionPredictor):
                 pred[:, :4] = ops.scale_boxes(img.shape[2:], pred[:, :4], orig_img.shape)
 
             rboxes = ops.regularize_rboxes(torch.cat([pred[:, :4], pred[:, 6].unsqueeze(1)], dim=-1))
-            rboxes[:, :4] = ops.scale_boxes(img.shape[2:], rboxes[:, :4], orig_img.shape, xywh=True)
+            # rboxes[:, :4] = ops.scale_boxes(img.shape[2:], rboxes[:, :4], orig_img.shape, xywh=True)
             # xywh, r, conf, cls
             obb = torch.cat([rboxes, pred[:, 4:6]], dim=-1)
             results.append(Results(orig_img, path=img_path, names=self.model.names, obb=obb, masks=masks))
