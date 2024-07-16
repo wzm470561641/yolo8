@@ -94,6 +94,7 @@ def verify_image(args):
     return (im_file, cls), nf, nc, msg
 
 
+
 def verify_image_label(args):
     """Verify one image-label pair."""
     im_file, lb_file, prefix, keypoint, obb, num_cls, nkpt, ndim = args
@@ -125,16 +126,17 @@ def verify_image_label(args):
                     lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
                 if obb and keypoint:
                     classes = np.array([x[0] for x in lb], dtype=np.float32)
-                    segments = [np.array(x[1:9], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)
+                    segments = [np.array(x[1:9], dtype=np.float32).reshape(-1, 2) for x in lb]  # (cls, xy1...)                
                 lb = np.array(lb, dtype=np.float32)
             nl = len(lb)
             if nl:
                 if keypoint:
-                    assert lb.shape[1] == (5 + nkpt * ndim), f"labels require {(5 + nkpt * ndim)} columns each"
-                    points = lb[:, 5:].reshape(-1, ndim)[:, :2]
                     if obb:
                         assert lb.shape[1] == (9 + nkpt * ndim), f"labels require {(9 + nkpt * ndim)} columns each"
-                        points = lb[:, 9:].reshape(-1, ndim)[:, :2]
+                        points = lb[:, 9:].reshape(-1, ndim)[:, :2]   
+                    else:
+                        assert lb.shape[1] == (5 + nkpt * ndim), f"labels require {(5 + nkpt * ndim)} columns each"
+                        points = lb[:, 5:].reshape(-1, ndim)[:, :2] 
                 else:
                     assert lb.shape[1] == 5, f"labels require 5 columns, {lb.shape[1]} columns detected"
                     points = lb[:, 1:]
@@ -160,20 +162,20 @@ def verify_image_label(args):
             nm = 1  # label missing
             lb = np.zeros((0, (5 + nkpt * ndim) if keypoints else 5), dtype=np.float32)
         if keypoint:
-            keypoints = lb[:, 5:].reshape(-1, nkpt, ndim)
             if ndim == 2:
                 kpt_mask = np.where((keypoints[..., 0] < 0) | (keypoints[..., 1] < 0), 0.0, 1.0).astype(np.float32)
                 keypoints = np.concatenate([keypoints, kpt_mask[..., None]], axis=-1)  # (nl, nkpt, 3)
             if obb:
                 keypoints = lb[:, 9:].reshape(-1, nkpt, ndim)
                 lb = np.concatenate((classes.reshape(-1, 1), segments2boxes(segments)), 1)  # (cls, xywh)
+            else:
+                keypoints = lb[:, 5:].reshape(-1, nkpt, ndim)
         lb = lb[:, :5]
         return im_file, lb, shape, segments, keypoints, nm, nf, ne, nc, msg
     except Exception as e:
         nc = 1
         msg = f"{prefix}WARNING ⚠️ {im_file}: ignoring corrupt image/label: {e}"
         return [None, None, None, None, None, nm, nf, ne, nc, msg]
-
 
 def polygon2mask(imgsz, polygons, color=1, downsample_ratio=1):
     """
