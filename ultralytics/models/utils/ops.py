@@ -86,7 +86,7 @@ class HungarianMatcher(nn.Module):
         # Compute the classification cost
         pred_scores = pred_scores[:, gt_cls]
         if self.use_fl:
-            neg_cost_class = (1 - self.alpha) * (pred_scores ** self.gamma) * -(1 - pred_scores + 1e-8).log()
+            neg_cost_class = (1 - self.alpha) * (pred_scores**self.gamma) * -(1 - pred_scores + 1e-8).log()
             pos_cost_class = self.alpha * ((1 - pred_scores) ** self.gamma) * -(pred_scores + 1e-8).log()
             cost_class = pos_cost_class - neg_cost_class
         else:
