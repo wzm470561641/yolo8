@@ -173,97 +173,54 @@ def kpt_iou(kpt1, kpt2, area, sigma, eps=1e-7):
     return ((-e).exp() * kpt_mask[:, None]).sum(-1) / (kpt_mask.sum(-1)[:, None] + eps)
 
 
-def _get_covariance_matrix(boxes):
-    """
-    Generating covariance matrix from obbs.
-
-    Args:
-        boxes (torch.Tensor): A tensor of shape (N, 5) representing rotated bounding boxes, with xywhr format.
-
-    Returns:
-        (torch.Tensor): Covariance metrixs corresponding to original rotated bounding boxes.
-    """
-    # Gaussian bounding boxes, ignore the center points (the first two columns) because they are not needed here.
-    gbbs = torch.cat((boxes[:, 2:4].pow(2) / 12, boxes[:, 4:]), dim=-1)
-    a, b, c = gbbs.split(1, dim=-1)
-    cos = c.cos()
-    sin = c.sin()
-    cos2 = cos.pow(2)
-    sin2 = sin.pow(2)
-    return a * cos2 + b * sin2, a * sin2 + b * cos2, (a - b) * cos * sin
-
-
 def probiou(obb1, obb2, CIoU=False, eps=1e-7):
     """
     Calculate the prob IoU between oriented bounding boxes, https://arxiv.org/pdf/2106.06072v1.pdf.
 
     Args:
-        obb1 (torch.Tensor): A tensor of shape (N, 5) representing ground truth obbs, with xywhr format.
-        obb2 (torch.Tensor): A tensor of shape (N, 5) representing predicted obbs, with xywhr format.
+        obb1 (torch.Tensor): A tensor of shape (..., 5) representing ground truth obbs, with xywhr format.
+        obb2 (torch.Tensor): A tensor of shape (..., 5) representing predicted obbs, with xywhr format.
         eps (float, optional): A small value to avoid division by zero. Defaults to 1e-7.
 
     Returns:
-        (torch.Tensor): A tensor of shape (N, ) representing obb similarities.
+        (torch.Tensor): A tensor representing obb similarities. Its shape is obtained by
+            broadcasting obb1 and obb2, and excluding the last dimension.
     """
-    x1, y1 = obb1[..., :2].split(1, dim=-1)
-    x2, y2 = obb2[..., :2].split(1, dim=-1)
-    a1, b1, c1 = _get_covariance_matrix(obb1)
-    a2, b2, c2 = _get_covariance_matrix(obb2)
 
-    t1 = (
-        ((a1 + a2) * (y1 - y2).pow(2) + (b1 + b2) * (x1 - x2).pow(2)) / ((a1 + a2) * (b1 + b2) - (c1 + c2).pow(2) + eps)
-    ) * 0.25
-    t2 = (((c1 + c2) * (x2 - x1) * (y1 - y2)) / ((a1 + a2) * (b1 + b2) - (c1 + c2).pow(2) + eps)) * 0.5
-    t3 = (
-        ((a1 + a2) * (b1 + b2) - (c1 + c2).pow(2))
-        / (4 * ((a1 * b1 - c1.pow(2)).clamp_(0) * (a2 * b2 - c2.pow(2)).clamp_(0)).sqrt() + eps)
-        + eps
-    ).log() * 0.5
+    def _get_covariance_matrix(w_term, h_term, cos, sin):
+        return w_term * cos**2 + h_term * sin**2, w_term * sin**2 + h_term * cos**2, (w_term - h_term) * cos * sin
+
+    x1, y1, wh1, theta1 = obb1.split((1, 1, 2, 1), dim=-1)
+    x2, y2, wh2, theta2 = obb2.split((1, 1, 2, 1), dim=-1)
+
+    w1_term, h1_term = (wh1.pow(2) / 12).split(1, dim=-1)
+    w2_term, h2_term = (wh2.pow(2) / 12).split(1, dim=-1)
+
+    cos1, sin1 = torch.cos(theta1), torch.sin(theta1)
+    cos2, sin2 = torch.cos(theta2), torch.sin(theta2)
+
+    a1, b1, c1 = _get_covariance_matrix(w1_term, h1_term, cos1, sin1)
+    a2, b2, c2 = _get_covariance_matrix(w2_term, h2_term, cos2, sin2)
+
+    det1 = w1_term * h1_term
+    det2 = w2_term * h2_term
+    cosdtheta_sq = (cos1 * cos2 + sin1 * sin2).pow(2)
+
+    det_sum = (det1 + det2) * (2 - cosdtheta_sq) + (w1_term * h2_term + w2_term * h1_term) * cosdtheta_sq
+    t1 = (((a1 + a2) * (y1 - y2).pow(2) + (b1 + b2) * (x1 - x2).pow(2)) / (det_sum + eps)) * 0.25
+    t2 = (c1 + c2) * (x2 - x1) * (y1 - y2) / (det_sum + eps) * 0.5
+    t3 = (det_sum / (4 * (det1 * det2).sqrt() + eps) + eps).log() * 0.5
     bd = (t1 + t2 + t3).clamp(eps, 100.0)
     hd = (1.0 - (-bd).exp() + eps).sqrt()
     iou = 1 - hd
     if CIoU:  # only include the wh aspect ratio part
-        w1, h1 = obb1[..., 2:4].split(1, dim=-1)
-        w2, h2 = obb2[..., 2:4].split(1, dim=-1)
+        w1, h1 = wh1.split(1, dim=-1)
+        w2, h2 = wh1.split(1, dim=-1)
         v = (4 / math.pi**2) * ((w2 / h2).atan() - (w1 / h1).atan()).pow(2)
         with torch.no_grad():
             alpha = v / (v - iou + (1 + eps))
-        return iou - v * alpha  # CIoU
-    return iou
-
-
-def batch_probiou(obb1, obb2, eps=1e-7):
-    """
-    Calculate the prob IoU between oriented bounding boxes, https://arxiv.org/pdf/2106.06072v1.pdf.
-
-    Args:
-        obb1 (torch.Tensor | np.ndarray): A tensor of shape (N, 5) representing ground truth obbs, with xywhr format.
-        obb2 (torch.Tensor | np.ndarray): A tensor of shape (M, 5) representing predicted obbs, with xywhr format.
-        eps (float, optional): A small value to avoid division by zero. Defaults to 1e-7.
-
-    Returns:
-        (torch.Tensor): A tensor of shape (N, M) representing obb similarities.
-    """
-    obb1 = torch.from_numpy(obb1) if isinstance(obb1, np.ndarray) else obb1
-    obb2 = torch.from_numpy(obb2) if isinstance(obb2, np.ndarray) else obb2
-
-    x1, y1 = obb1[..., :2].split(1, dim=-1)
-    x2, y2 = (x.squeeze(-1)[None] for x in obb2[..., :2].split(1, dim=-1))
-    a1, b1, c1 = _get_covariance_matrix(obb1)
-    a2, b2, c2 = (x.squeeze(-1)[None] for x in _get_covariance_matrix(obb2))
-
-    t1 = (
-        ((a1 + a2) * (y1 - y2).pow(2) + (b1 + b2) * (x1 - x2).pow(2)) / ((a1 + a2) * (b1 + b2) - (c1 + c2).pow(2) + eps)
-    ) * 0.25
-    t2 = (((c1 + c2) * (x2 - x1) * (y1 - y2)) / ((a1 + a2) * (b1 + b2) - (c1 + c2).pow(2) + eps)) * 0.5
-    t3 = (
-        ((a1 + a2) * (b1 + b2) - (c1 + c2).pow(2))
-        / (4 * ((a1 * b1 - c1.pow(2)).clamp_(0) * (a2 * b2 - c2.pow(2)).clamp_(0)).sqrt() + eps)
-        + eps
-    ).log() * 0.5
-    bd = (t1 + t2 + t3).clamp(eps, 100.0)
-    hd = (1.0 - (-bd).exp() + eps).sqrt()
-    return 1 - hd
+        return (iou - v * alpha).squeeze(-1)  # CIoU
+    return iou.squeeze(-1)
 
 
 def smooth_BCE(eps=0.1):
@@ -343,7 +300,10 @@ class ConfusionMatrix:
         detection_classes = detections[:, 5].int()
         is_obb = detections.shape[1] == 7 and gt_bboxes.shape[1] == 5  # with additional `angle` dimension
         iou = (
-            batch_probiou(gt_bboxes, torch.cat([detections[:, :4], detections[:, -1:]], dim=-1))
+            probiou(
+                gt_bboxes[:, None],
+                torch.cat([detections[:, :4], detections[:, -1:]], dim=-1)[None],
+            )
             if is_obb
             else box_iou(gt_bboxes, detections[:, :4])
         )
