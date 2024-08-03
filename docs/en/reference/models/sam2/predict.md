@@ -13,4 +13,8 @@ keywords: Ultralytics, SAM 2, Segment Anything Model 2, image segmentation, real
 
 ## ::: ultralytics.models.sam2.predict.SAM2Predictor
 
+<br><br><hr><br>
+
+## ::: ultralytics.models.sam2.predict.SAM2VideoPredictor
+
 <br><br>
